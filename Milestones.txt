@@ -1,0 +1,93 @@
+# RAG Development Plan
+
+## **Week 1 — Scope, Data Collection and Pre-Processing**
+
+### **Objectives**
+- Lock scope, collect documents, and stand up retrieval baseline.
+
+### **Tasks**
+- Confirm MVP features  
+- List website links to scrape data from  
+- Perform web scraping on listed websites  
+- Extract data such as text, PDFs, images, and documents  
+- Pre-process data:
+  - Translate Nepali to English  
+  - Replace ligatures, clean formatting, etc.  
+- Parse PDFs/HTML/Docs → text  
+
+### **Deliverables**
+- Data collection completed  
+- All data available in English language  
+
+---
+
+## **Week 2 — Embedding + Semantic Retrieval + RAG MVP**
+
+### **Objectives**
+- Ship end-to-end RAG with citations on CPU.
+
+### **Tasks**
+- Chunk text (300–500 tokens) with metadata (doc/page/“effective from”)  
+- Embed chunks using an embedding model (CPU) → store into vector database  
+- Build a baseline similarity search  
+- Implement query pipeline:  
+  `prompt → (optional) chunk → embedding → retrieve top K results from vector DB`  
+- Build unanswerable detection (threshold on retrieval score)  
+- Curate 50–100 real FAQs with gold answers and sources for testing  
+
+### **Deliverables**
+- Similarity search demo notebook  
+- Evaluation set (`CSV: question, source`)  
+- RAG API (FastAPI) endpoints:  
+  - `/ask`  
+  - `/ingest`  
+- Evaluation script: EM/F1, hit@k, citation precision  
+
+### **Risk Check**
+- If latency > 2s → reduce `top_k`, shrink chunk size, cache embeddings, or drop cross-encoder  
+
+---
+
+## **Week 3 — UX, Guardrails, Quality Pass**
+
+### **Objectives**
+- Make it usable and safe; improve answer quality.
+
+### **Tasks**
+- Integrate with LLM  
+- Build simple UI (React): chat, sources, copy link to section  
+- Add guardrails:
+  - Disclaimers  
+  - Refusal when low confidence  
+  - Version/date banner  
+
+### **Deliverables**
+- Usable web demo  
+
+### **Risk Check**
+- If QA still misses, try:
+  - Query rewriting (add keywords from synonyms)  
+  - Small BM25 + Embeddings hybrid approach  
+
+---
+
+## **Week 4 — Hardening, Handover, Presentation**
+
+### **Objectives**
+- Stabilize, document, and present.
+
+### **Tasks**
+- Build admin ingest flow:  
+  “Drop PDF → run script → reindex” with checksum & version tag  
+- Add monitoring:
+  - Basic logs (latency, top_k used, empty hits, unanswered queries)  
+- Conduct security pass:
+  - Ensure no personal data  
+  - Restrict to official documents only  
+- Write final report:
+  - Methods, metrics, error cases, limitations, next steps  
+- Rehearse demo and collect final approvals  
+
+### **Deliverables**
+- Repository with README (`setup`, `.env`, `run`, `evaluate`, `ingest`)  
+- Final slide deck + 5-min demo video (optional)
