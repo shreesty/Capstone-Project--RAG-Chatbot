@@ -1,4 +1,9 @@
 
+requests
+pdfplumber
+aiohttp
+async_timeout
+
 
 langchain
 langchain-groq
