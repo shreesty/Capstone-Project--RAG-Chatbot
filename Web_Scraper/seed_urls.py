@@ -2,7 +2,7 @@
 # This file just stores the list of seed URLs for the crawler.
 
 SEED_URLS = [
-    "https://en.wikipedia.org/wiki/List_of_universities_in_Nepal",
+    
     "https://tu.edu.np/",
     "https://ku.edu.np/",
     "https://purbanchaluniversity.edu.np/",
@@ -25,14 +25,14 @@ SEED_URLS = [
     "https://www.bpkihs.edu/",
     "https://web.pahs.edu.np/",
     "https://kahs.edu.np/",
-    "https://en.wikipedia.org/wiki/Pokhara_Academy_of_Health_Sciences",
-    "https://en.wikipedia.org/wiki/Rapti_Academy_of_Health_Sciences",
-    "https://en.wikipedia.org/wiki/Madan_Bhandari_Academy_of_Health_Sciences",
-    "https://en.wikipedia.org/wiki/Madhesh_Institute_of_Health_Sciences",
-    "https://en.wikipedia.org/wiki/List_of_forestry_colleges_in_Nepal",
-    "https://en.wikipedia.org/wiki/List_of_engineering_colleges_in_Nepal",
-    "https://en.wikipedia.org/wiki/List_of_medical_colleges_in_Nepal",
-    "https://en.wikipedia.org/wiki/Education_in_Nepal",
+    # "https://en.wikipedia.org/wiki/Pokhara_Academy_of_Health_Sciences",
+    # "https://en.wikipedia.org/wiki/Rapti_Academy_of_Health_Sciences",
+    # "https://en.wikipedia.org/wiki/Madan_Bhandari_Academy_of_Health_Sciences",
+    # "https://en.wikipedia.org/wiki/Madhesh_Institute_of_Health_Sciences",
+    # "https://en.wikipedia.org/wiki/List_of_forestry_colleges_in_Nepal",
+    # "https://en.wikipedia.org/wiki/List_of_engineering_colleges_in_Nepal",
+    # "https://en.wikipedia.org/wiki/List_of_medical_colleges_in_Nepal",
+    # "https://en.wikipedia.org/wiki/Education_in_Nepal",
     "https://edusanjal.com/college/",
     "https://ctevt.org.np/",
     "https://neb.gov.np/contact-us",
