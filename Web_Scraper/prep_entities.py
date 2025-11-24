@@ -1,41 +1,50 @@
 #!/usr/bin/env python3
 """
-Preprocess your scraped folder tree into ONE FILE PER UNIVERSITY / COLLEGE
-with mixed-language inline translation of Nepali spans inside English text.
+Preprocess your scraped folder tree into ONE FILE PER UNIVERSITY / COLLEGE.
 
 Input tree (example):
 Web_Scraper/scraped_data/
   ├── afu.edu.np/
   │   ├── text/*.txt
   │   ├── docs/*.pdf
-  │   ├── html/*.html  (ignored by default; we prefer text/*.txt)
-  │   ├── images/*     (OCR optional later)
+  │   ├── html/*.html (ignored by default; use text/*.txt instead)
+  │   ├── images/*  (optionally OCR later)
   │   └── metadata.jsonl (optional)
   ├── bagmatiuniversity.edu.np/
   └── ...
 
-Outputs (under --out, default ./processed_tree):
-  processed_tree/
-    └── entities/
-        ├── agriculture-and-forestry-university.json
-        ├── agriculture-and-forestry-university.md  (if --format md/both)
-        └── ...
+What this script does:
+  • Walks every domain folder under --in-root (default: Web_Scraper/scraped_data)
+  • Reads all TXT files, extracts text from PDFs (best‑effort via pdfplumber)
+  • Cleans text (Unicode NFC, zero‑width removal, fix ligatures, normalize Nepali digits)
+  • Language detection; optional Nepali → English translation (Argos Translate)
+  • Concatenates into one JSON (and/or Markdown) per entity in --out (default: ./processed_tree)
 
-Install:
+Install deps:
     pip install langdetect ftfy pdfplumber
-    # Optional offline translator (Nepali→English):
+    # Optional for offline translation (Nepali→English):
     pip install argostranslate
+
+Examples:
+    # Produce JSON only, no translation
+    python prep_from_tree.py --in-root "Web_Scraper/scraped_data" --out processed_tree --format json
+
+    # JSON + Markdown, with Argos translation and 20k char cap per blob
+    python prep_from_tree.py --format both --translate-provider argos --translate-char-limit 20000
+
+Notes:
+    • PDF extraction is best‑effort; structured tables are not flattened beyond plaintext here.
+    • For image OCR, integrate tesseract/pytesseract later.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import logging
 import re
 import unicodedata
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 
 import ftfy
 from langdetect import detect as ld_detect, DetectorFactory
@@ -43,39 +52,21 @@ DetectorFactory.seed = 42
 
 import pdfplumber
 
-# Quiet pdfminer warnings like:
-# "Cannot set gray non-stroke color because /'P95' is an invalid float value"
-for name in ("pdfminer", "pdfminer.pdfinterp", "pdfminer.pdfpage", "pdfminer.layout"):
-    logging.getLogger(name).setLevel(logging.ERROR)
-
 # --------------------------- CLI --------------------------- #
 
 def build_argparser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Preprocess folder tree into one file per university/college (with inline Nepali→English support)"
-    )
-    p.add_argument("--in-root", type=Path, default=Path("scraped_data"),
-                   help="Root folder that contains one subfolder per domain")
-    p.add_argument("--out", type=Path, default=Path("processed_tree"),
-                   help="Output folder")
-    p.add_argument("--format", choices=["json", "md", "both"], default="json",
-                   help="Output type(s)")
-    p.add_argument("--translate-provider", choices=["none", "argos"], default="argos",
-                   help="Nepali→English translator")
-    p.add_argument("--translate-char-limit", type=int, default=15000,
-                   help="Max characters to translate per blob or inline spans")
-    p.add_argument("--max-pdf-pages", type=int, default=50,
-                   help="Hard page cap per PDF to avoid heavy docs (0 = no cap)")
-    p.add_argument("--min-paragraph-len", type=int, default=30,
-                   help="Drop tiny fragments below this length")
-    p.add_argument("--no-inline-mixed", action="store_true",
-                   help="Disable inline translation of Nepali spans inside otherwise-English text")
-    p.add_argument("--nepali-majority-threshold", type=float, default=0.30,
-                   help=">= this ratio → full translation; else inline (0..1)")
+    p = argparse.ArgumentParser(description="Preprocess folder tree into one file per university/college")
+    p.add_argument("--in-root", type=Path, default=Path("Web_Scraper/scraped_data"), help="Root folder that contains one subfolder per domain")
+    p.add_argument("--out", type=Path, default=Path("processed_tree"), help="Output folder")
+    p.add_argument("--format", choices=["json", "md", "both"], default="json", help="Output type(s)")
+    p.add_argument("--translate-provider", choices=["none", "argos"], default="none", help="Nepali→English translator")
+    p.add_argument("--translate-char-limit", type=int, default=15000, help="Max characters to translate per blob")
+    p.add_argument("--max-pdf-pages", type=int, default=50, help="Hard page cap per PDF to avoid heavy docs (0 = no cap)")
+    p.add_argument("--min-paragraph-len", type=int, default=30, help="Drop tiny fragments below this length")
     return p
 
-# --------------------------- Domain → entity map --------------------------- #
-
+# --------------------------- Mappings --------------------------- #
+# Map base domains to canonical entity names/types (extend as needed)
 DOMAIN_MAP: Dict[str, Tuple[str, str]] = {
     "tu.edu.np": ("Tribhuvan University", "university"),
     "ku.edu.np": ("Kathmandu University", "university"),
@@ -107,15 +98,14 @@ DOMAIN_MAP: Dict[str, Tuple[str, str]] = {
 }
 
 # --------------------------- Text utilities --------------------------- #
-
 NEPALI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 LATIN_LIGATURES = {"ﬀ":"ff","ﬁ":"fi","ﬂ":"fl","ﬃ":"ffi","ﬄ":"ffl","ﬅ":"ft","ﬆ":"st"}
 ZERO_WIDTH = re.compile(r"[\u200B-\u200F\uFEFF]")
-# Devanagari spans (covers Nepali script, joins across optional ZWJ/ZWNJ, hyphens, spaces)
-DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]+(?:[\u200c\u200d\-–—\s]*[\u0900-\u097F]+)*")
+
 
 def nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s)
+
 
 def normalize_basic(text: str) -> str:
     if not text:
@@ -129,6 +119,7 @@ def normalize_basic(text: str) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
+
 def detect_lang(text: str) -> str:
     try:
         return ld_detect(text)
@@ -136,7 +127,6 @@ def detect_lang(text: str) -> str:
         return "unknown"
 
 # --------------------------- Translation --------------------------- #
-
 class Translator:
     def translate(self, text: str) -> str:
         return text
@@ -151,7 +141,6 @@ class ArgosTranslator(Translator):
             if pkgs:
                 pkg.install_from_path(pkgs[0].download())
         except Exception:
-            # If offline or already installed, it's fine
             pass
         self.tr = tr
     def translate(self, text: str) -> str:
@@ -160,42 +149,7 @@ class ArgosTranslator(Translator):
         except Exception:
             return text
 
-# Inline replacer for mixed-language paragraphs (Nepali spans inside English)
-class InlineNepaliReplacer:
-    def __init__(self, translator: Translator):
-        self.tr = translator
-        self.cache: Dict[str, str] = {}
-    def replace(self, text: str, char_budget: int) -> str:
-        out: List[str] = []
-        last = 0
-        used = 0
-        for m in DEVANAGARI_RE.finditer(text):
-            out.append(text[last:m.start()])
-            chunk = m.group(0)
-            cached = self.cache.get(chunk)
-            if cached is not None:
-                out.append(cached)
-            else:
-                if used + len(chunk) > char_budget:
-                    out.append(chunk)  # budget exceeded → keep original
-                else:
-                    en = self.tr.translate(chunk)
-                    self.cache[chunk] = en
-                    out.append(en)
-                    used += len(chunk)
-            last = m.end()
-        out.append(text[last:])
-        return "".join(out)
-
-def nepali_ratio(text: str) -> float:
-    if not text:
-        return 0.0
-    spans = DEVANAGARI_RE.findall(text)
-    nep_len = sum(len(s) for s in spans)
-    return nep_len / max(1, len(text))
-
 # --------------------------- Data model --------------------------- #
-
 @dataclass
 class Blob:
     source: str
@@ -224,6 +178,7 @@ def base_domain(name: str) -> str:
         s = s[4:]
     return s
 
+
 def guess_entity(domain: str) -> Tuple[str, str]:
     d = base_domain(domain)
     return DOMAIN_MAP.get(d, (d, "organization"))
@@ -236,6 +191,7 @@ def read_text_file(p: Path) -> Optional[str]:
         return t if t.strip() else None
     except Exception:
         return None
+
 
 def extract_pdf_text(pdf_path: Path, page_cap: int) -> Optional[str]:
     try:
@@ -251,24 +207,12 @@ def extract_pdf_text(pdf_path: Path, page_cap: int) -> Optional[str]:
 
 # --------------------------- Core --------------------------- #
 
-def process_domain_folder(
-    folder: Path,
-    *,
-    translator: Translator,
-    char_limit: int,
-    min_para_len: int,
-    page_cap: int,
-    inline_mixed: bool,
-    majority_threshold: float,
-) -> Optional[EntityDoc]:
+def process_domain_folder(folder: Path, *, translator: Translator, char_limit: int, min_para_len: int, page_cap: int) -> Optional[EntityDoc]:
     if not folder.is_dir():
         return None
     domain = base_domain(folder.name)
     name, etype = guess_entity(domain)
     entity = EntityDoc(name=name, domain=domain, entity_type=etype)
-
-    translation_enabled = not isinstance(translator, Translator) or translator.__class__ is not Translator
-    inliner = InlineNepaliReplacer(translator) if (translation_enabled and inline_mixed) else None
 
     # TXT sources
     for p in sorted((folder / "text").glob("**/*.txt")):
@@ -281,18 +225,10 @@ def process_domain_folder(
             continue
         lang = detect_lang(norm) if len(norm) > 20 else "unknown"
         blob = Blob(source=str(p), kind="txt", lang=lang, text_norm=norm)
-
-        ratio = nepali_ratio(norm)
-        if translation_enabled:
-            if ratio >= majority_threshold:
-                blob.text_en = translator.translate(norm[:char_limit])
-            elif ratio > 0 and inliner is not None:
-                blob.text_en = inliner.replace(norm, char_limit)
-            elif lang.startswith("en"):
-                blob.text_en = norm
-        else:
-            if lang.startswith("en"):
-                blob.text_en = norm
+        if lang.startswith("ne"):
+            blob.text_en = translator.translate(norm[:char_limit])
+        elif lang.startswith("en"):
+            blob.text_en = norm
         entity.blobs.append(blob)
 
     # PDF sources
@@ -306,25 +242,17 @@ def process_domain_folder(
             continue
         lang = detect_lang(norm) if len(norm) > 20 else "unknown"
         blob = Blob(source=str(p), kind="pdf", lang=lang, text_norm=norm)
-
-        ratio = nepali_ratio(norm)
-        if translation_enabled:
-            if ratio >= majority_threshold:
-                blob.text_en = translator.translate(norm[:char_limit])
-            elif ratio > 0 and inliner is not None:
-                blob.text_en = inliner.replace(norm, char_limit)
-            elif lang.startswith("en"):
-                blob.text_en = norm
-        else:
-            if lang.startswith("en"):
-                blob.text_en = norm
+        if lang.startswith("ne"):
+            blob.text_en = translator.translate(norm[:char_limit])
+        elif lang.startswith("en"):
+            blob.text_en = norm
         entity.blobs.append(blob)
 
     # If nothing collected, skip
     if not entity.blobs:
         return None
 
-    # Lightweight dedupe by normalized/translated content
+    # Lightweight dedupe by normalized paragraph hash
     seen: set[str] = set()
     uniq: List[Blob] = []
     for b in entity.blobs:
@@ -345,6 +273,7 @@ def process_domain_folder(
 def slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "entity"
 
+
 def to_markdown(e: EntityDoc) -> str:
     lines = [
         f"# {e.name}",
@@ -364,15 +293,15 @@ def to_markdown(e: EntityDoc) -> str:
         lines.append(f"\n### Blob {i} ({b.kind})\nSource: {b.source}\nLang: {b.lang}\n\n{txt}\n")
     return "\n".join(lines)
 
+
 def write_entity(out_dir: Path, e: EntityDoc, fmt: str) -> None:
     (out_dir / "entities").mkdir(parents=True, exist_ok=True)
     slug = slugify(e.name)
     if fmt in ("json", "both"):
         data = asdict(e)
+        # convert dataclasses inside
         data["blobs"] = [asdict(b) for b in e.blobs]
-        (out_dir / "entities" / f"{slug}.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        (out_dir / "entities" / f"{slug}.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if fmt in ("md", "both"):
         (out_dir / "entities" / f"{slug}.md").write_text(to_markdown(e), encoding="utf-8")
 
@@ -383,9 +312,10 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     # Translator
+    translator: Translator
     if args.translate_provider == "argos":
         try:
-            translator: Translator = ArgosTranslator()
+            translator = ArgosTranslator()
         except Exception:
             translator = Translator()
     else:
@@ -395,20 +325,13 @@ def main() -> None:
     for folder in sorted(args.in_root.iterdir()):
         if not folder.is_dir():
             continue
-        ent = process_domain_folder(
-            folder,
-            translator=translator,
-            char_limit=args.translate_char_limit,
-            min_para_len=args.min_paragraph_len,
-            page_cap=args.max_pdf_pages,
-            inline_mixed=(not args.no_inline_mixed),
-            majority_threshold=args.nepali_majority_threshold,
-        )
+        ent = process_domain_folder(folder, translator=translator, char_limit=args.translate_char_limit, min_para_len=args.min_paragraph_len, page_cap=args.max_pdf_pages)
         if not ent:
             continue
         write_entity(args.out, ent, fmt=args.format)
         count += 1
     print(f"✓ Wrote {count} entity files to {args.out / 'entities'}")
+
 
 if __name__ == "__main__":
     main()
