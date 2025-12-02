@@ -248,9 +248,12 @@ dependencies = [
     { name = "python-slugify" },
     { name = "requests" },
     { name = "sentence-transformers" },
+    { name = "sentencepiece" },
     { name = "tiktoken" },
+    { name = "torch" },
     { name = "tqdm" },
     { name = "trafilatura" },
+    { name = "transformers" },
 ]
 
 [package.metadata]
@@ -282,9 +285,12 @@ requires-dist = [
     { name = "python-slugify", specifier = ">=8.0.4" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "sentence-transformers", specifier = ">=5.1.2" },
+    { name = "sentencepiece", specifier = ">=0.2.1" },
     { name = "tiktoken", specifier = ">=0.12.0" },
+    { name = "torch", specifier = ">=2.9.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "trafilatura", specifier = ">=2.0.0" },
+    { name = "transformers", specifier = ">=4.57.1" },
 ]
 
 [[package]]
