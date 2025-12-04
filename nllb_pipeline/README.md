@@ -10,12 +10,7 @@ This folder holds the data pipeline for sentence-wise translation with NLLB-600M
 
 Run:
 ```bash
-python nllb_pipeline/extract.py \
-  --root scraped_data \
-  --output processed_data/extracted_documents.jsonl \
-  --ocr-pdf-pages 2 \
-  --limit 50      # optional
-  --no-images     # optional
+python nllb_pipeline/extract.py 
 ```
 
 ## Stage 2: Sentence splitting (ready)
@@ -25,11 +20,7 @@ python nllb_pipeline/extract.py \
 
 Run:
 ```bash
-python nllb_pipeline/split_sentences.py \
-  --input processed_data/extracted_documents.jsonl \
-  --output processed_data/sentences.jsonl \
-  --min-chars 2 \
-  --limit 1000   # optional
+python nllb_pipeline/split_sentences.py 
 ```
 
 ## Stage 3: Translation with NLLB-600M (ready)
@@ -40,16 +31,53 @@ python nllb_pipeline/split_sentences.py \
 
 Run (ensure the model is downloaded/cached):
 ```bash
-python nllb_pipeline/translate_nllb.py \
-  --input processed_data/sentences.jsonl \
-  --output processed_data/translated_sentences.jsonl \
-  --model facebook/nllb-200-distilled-600M \
-  --src-lang-code npi_Deva \
-  --tgt-lang-code eng_Latn \
-  --batch-size 8 \
-  --device auto \
-  --limit 500   # optional
+python nllb_pipeline/translate_nllb.py 
 ```
 
-## Next stage (to implement)
-- Merger/formatter to emit bilingual JSONL/CSV aligned to sentence IDs for embeddings or RAG.
+## Stage 4: Embeddings (ready)
+- Script: `nllb_pipeline/embed_sentences.py`
+- Input: `processed_data/translated_sentences.jsonl`
+- Output: FAISS index + metadata in `vector_store/faiss_sentences/`.
+- By default embeds the translated English text; add `--no-translation` to embed original sentences.
+
+Run:
+```bash
+python nllb_pipeline/embed_sentences.py
+```
+
+## Stage 5: Query testing (ready)
+- Script: `nllb_pipeline/query_tester.py`
+- Input: FAISS index + metadata from `vector_store/faiss_sentences/`.
+- Runs a similarity search against the saved vectors to sanity check retrieval.
+
+Run:
+```bash
+python nllb_pipeline/query_tester.py --query "your search text" --top-k 5 
+```
+
+## Stage 6: RAG with Llama via Groq (ready)
+- Script: `nllb_pipeline/rag_query.py`
+- Input: FAISS index + metadata; uses the same embedding model for query encoding and Groq's Llama model for generation.
+- Requires `GROQ_API_KEY` in the environment (already read from `.env` if loaded).
+
+Run:
+```bash
+python nllb_pipeline/rag_query.py --query "your question" --top-k 5 --print-context  
+```
+Add `--query-file path/to/query.txt` for longer prompts. Adjust `--temperature` or choose `--model llama-3.3-8b-instant` if you want a lighter/cheaper option. If you see a decommission notice, switch to the latest `llama-3.3-*` model names above.
+
+## Stage 7: FastAPI RAG service (ready)
+- Script: `nllb_pipeline/api_server.py`
+- Exposes `/health` and `/query` endpoints for retrieval-augmented answers powered by Groq's Llama models.
+- Requires `GROQ_API_KEY` in the environment; optionally set `FAISS_INDEX_PATH`, `FAISS_METADATA_PATH`, `EMBEDDING_MODEL` to override defaults.
+
+Run:
+```bash
+uvicorn nllb_pipeline.api_server:app --host localhost --port 8000
+```
+
+Example query:
+```bash
+
+http://localhost:8000/docs 
+```

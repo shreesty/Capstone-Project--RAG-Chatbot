@@ -34,3 +34,5 @@ langdetect
 transformers
 torch
 sentencepiece
+fastapi
+uvicorn

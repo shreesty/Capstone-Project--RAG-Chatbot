@@ -11,6 +11,7 @@ dependencies = [
     "beautifulsoup4>=4.14.2",
     "chromadb>=0.3.23",
     "faiss-cpu>=1.13.0",
+    "fastapi>=0.121.3",
     "ftfy>=6.3.1",
     "google-cloud-translate>=3.23.0",
     "httpx>=0.28.1",
@@ -38,4 +39,5 @@ dependencies = [
     "tqdm>=4.67.1",
     "trafilatura>=2.0.0",
     "transformers>=4.57.1",
+    "uvicorn>=0.38.0",
 ]
