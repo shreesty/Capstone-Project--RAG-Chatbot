@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 import torch
+from openai import AzureOpenAI, BadRequestError
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from tqdm import tqdm
+from dotenv import load_dotenv
+load_dotenv()
 
 
 @dataclass
@@ -73,6 +77,77 @@ def iter_sentences(input_path: Path) -> Iterable[dict]:
                 continue
 
 
+class AzureChatTranslator:
+    """Lightweight wrapper around Azure OpenAI chat completions for translation."""
+
+    def __init__(
+        self,
+        deployment: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_version: Optional[str] = None,
+        temperature: float = 0.0,
+        system_prompt: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> None:
+        # accept multiple common env var spellings
+        self.deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT_URL")
+        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_KEY")
+        self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+        self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
+        self.system_prompt = system_prompt or "You are a translation engine. Translate the user's text to English. Return only the translation."
+
+        missing = [name for name, val in (
+            ("AZURE_OPENAI_DEPLOYMENT", self.deployment),
+            ("AZURE_OPENAI_ENDPOINT", self.endpoint),
+            ("AZURE_OPENAI_API_KEY", self.api_key),
+        ) if not val]
+        if missing:
+            raise RuntimeError(f"Missing Azure OpenAI configuration: {', '.join(missing)}")
+
+        self.client = AzureOpenAI(
+            azure_endpoint=self.endpoint,
+            api_key=self.api_key,
+            api_version=self.api_version,
+        )
+
+    def translate_batch(self, texts: List[str]) -> List[str]:
+        translations: List[str] = []
+        for text in texts:
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.deployment,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": text},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_output_tokens,
+                )
+            except BadRequestError as exc:
+                # Azure content filter or similar; pass through original text so downstream steps continue.
+                if "content_filter" in str(exc):
+                    logging.warning(
+                        "Azure content filter hit; passing through original text. deployment=%s endpoint=%s",
+                        self.deployment,
+                        self.endpoint,
+                    )
+                    translations.append(text)
+                    continue
+                raise RuntimeError(
+                    f"Azure translation failed (deployment={self.deployment}, endpoint={self.endpoint}, api_version={self.api_version}): {exc}"
+                ) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"Azure translation failed (deployment={self.deployment}, endpoint={self.endpoint}, api_version={self.api_version}): {exc}"
+                ) from exc
+            choice = resp.choices[0].message.content if resp.choices else ""
+            translations.append((choice or "").strip())
+        return translations
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Translate sentence JSONL (Nepali -> English) using NLLB."
@@ -94,6 +169,49 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="facebook/nllb-200-distilled-600M",
         help="Hugging Face model name or local path.",
+    )
+    parser.add_argument(
+        "--translator-backend",
+        type=str,
+        choices=["nllb", "azure"],
+        default="azure",
+        help="Translation backend to use (default: nllb).",
+    )
+    parser.add_argument(
+        "--azure-deployment",
+        type=str,
+        default=None,
+        help="Azure OpenAI deployment name for GPT-4.0-mini (falls back to AZURE_OPENAI_DEPLOYMENT).",
+    )
+    parser.add_argument(
+        "--azure-endpoint",
+        type=str,
+        default=None,
+        help="Azure OpenAI endpoint (falls back to AZURE_OPENAI_ENDPOINT).",
+    )
+    parser.add_argument(
+        "--azure-api-key",
+        type=str,
+        default=None,
+        help="Azure OpenAI API key (falls back to AZURE_OPENAI_API_KEY).",
+    )
+    parser.add_argument(
+        "--azure-api-version",
+        type=str,
+        default=None,
+        help="Azure OpenAI API version (falls back to AZURE_OPENAI_API_VERSION or 2024-08-01-preview).",
+    )
+    parser.add_argument(
+        "--azure-temperature",
+        type=float,
+        default=0.0,
+        help="Temperature for Azure translation calls (default 0.0).",
+    )
+    parser.add_argument(
+        "--azure-max-output-tokens",
+        type=int,
+        default=None,
+        help="Max tokens for Azure translation responses.",
     )
     parser.add_argument(
         "--source-lang-filter",
@@ -151,9 +269,21 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    device = auto_device(args.device)
-    tokenizer, model = load_model(args.model, device)
-    bos_id = forced_bos_id(tokenizer, args.tgt_lang_code)
+    azure_translator: Optional[AzureChatTranslator] = None
+    if args.translator_backend == "azure":
+        azure_translator = AzureChatTranslator(
+            deployment=args.azure_deployment,
+            endpoint=args.azure_endpoint,
+            api_key=args.azure_api_key,
+            api_version=args.azure_api_version,
+            temperature=args.azure_temperature,
+            max_output_tokens=args.azure_max_output_tokens,
+        )
+        logging.info("Using Azure OpenAI deployment=%s endpoint=%s", azure_translator.deployment, azure_translator.endpoint)
+    else:
+        device = auto_device(args.device)
+        tokenizer, model = load_model(args.model, device)
+        bos_id = forced_bos_id(tokenizer, args.tgt_lang_code)
 
     total_written = 0
     with args.output.open("w", encoding="utf-8") as out_f:
@@ -175,21 +305,24 @@ def main() -> None:
             translations: list[str] = []
             if to_translate:
                 texts = [r.get("sentence", "") for r in to_translate]
-                tokenizer.src_lang = args.src_lang_code
-                inputs = tokenizer(
-                    texts,
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=args.max_input_length,
-                ).to(device)
+                if args.translator_backend == "azure":
+                    translations = azure_translator.translate_batch(texts)  # type: ignore[union-attr]
+                else:
+                    tokenizer.src_lang = args.src_lang_code
+                    inputs = tokenizer(
+                        texts,
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=args.max_input_length,
+                    ).to(device)
 
-                outputs = model.generate(
-                    **inputs,
-                    forced_bos_token_id=bos_id,
-                    max_length=args.max_output_length,
-                )
-                translations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                    outputs = model.generate(  # type: ignore[union-attr]
+                        **inputs,
+                        forced_bos_token_id=bos_id,  # type: ignore[union-attr]
+                        max_length=args.max_output_length,
+                    )
+                    translations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
             # emit translated records
             for rec, translation in zip(to_translate, translations):
@@ -205,7 +338,7 @@ def main() -> None:
                     sentence=rec.get("sentence", ""),
                     translation=translation,
                     translated=True,
-                    translator_model=args.model,
+                    translator_model=args.azure_deployment if args.translator_backend == "azure" else args.model,
                     source_lang_code=args.src_lang_code,
                     target_lang_code=args.tgt_lang_code,
                 )
@@ -240,13 +373,21 @@ def main() -> None:
                 if args.limit is not None and total_written >= args.limit:
                     break
 
-    logging.info(
-        "Wrote %d sentences to %s (model=%s, device=%s)",
-        total_written,
-        args.output,
-        args.model,
-        device,
-    )
+    if args.translator_backend == "azure":
+        logging.info(
+            "Wrote %d sentences to %s (backend=azure deployment=%s)",
+            total_written,
+            args.output,
+            args.azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT", ""),
+        )
+    else:
+        logging.info(
+            "Wrote %d sentences to %s (backend=nllb model=%s, device=%s)",
+            total_written,
+            args.output,
+            args.model,
+            device,  # type: ignore[arg-type]
+        )
 
 
 if __name__ == "__main__":

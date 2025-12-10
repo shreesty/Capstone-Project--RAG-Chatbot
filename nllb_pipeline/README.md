@@ -29,6 +29,8 @@ python nllb_pipeline/split_sentences.py
 - Output: `processed_data/translated_sentences.jsonl` with added translation metadata.
 - Defaults: translates only Nepali (`doc_language == "ne"`) sentences using NLLB language codes `npi_Deva` (src) → `eng_Latn` (tgt).
 
+Azure option: add `--translator-backend azure --azure-deployment <deployment>` to use Azure OpenAI GPT-4.0-mini instead of NLLB (requires `AZURE_OPENAI_*` env vars).
+
 Run (ensure the model is downloaded/cached):
 ```bash
 python nllb_pipeline/translate_nllb.py 
@@ -59,6 +61,7 @@ python nllb_pipeline/query_tester.py --query "your search text" --top-k 5
 - Script: `nllb_pipeline/rag_query.py`
 - Input: FAISS index + metadata; uses the same embedding model for query encoding and Groq's Llama model for generation.
 - Requires `GROQ_API_KEY` in the environment (already read from `.env` if loaded).
+- Azure option: use `--llm-backend azure --azure-deployment <deployment>` (requires `AZURE_OPENAI_*` env vars; `--model` is treated as the deployment name).
 
 Run:
 ```bash
@@ -70,6 +73,7 @@ Add `--query-file path/to/query.txt` for longer prompts. Adjust `--temperature` 
 - Script: `nllb_pipeline/api_server.py`
 - Exposes `/health` and `/query` endpoints for retrieval-augmented answers powered by Groq's Llama models.
 - Requires `GROQ_API_KEY` in the environment; optionally set `FAISS_INDEX_PATH`, `FAISS_METADATA_PATH`, `EMBEDDING_MODEL` to override defaults.
+- Azure option: set `LLM_BACKEND=azure` and populate `AZURE_OPENAI_*` in `.env`. `model` field in requests is treated as the Azure deployment name when backend=azure.
 
 Run:
 ```bash

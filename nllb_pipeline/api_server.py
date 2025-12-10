@@ -4,13 +4,14 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import faiss
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
@@ -23,6 +24,7 @@ DEFAULT_INDEX_PATH = Path("vector_store/faiss_sentences/index.faiss")
 DEFAULT_META_PATH = Path("vector_store/faiss_sentences/metadata.jsonl")
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
 
 app = FastAPI(
     title="RAG API",
@@ -35,6 +37,9 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="User question.")
     top_k: int = Field(5, ge=1, le=50, description="Number of neighbors to retrieve.")
     model: str = Field(DEFAULT_LLM_MODEL, description="Groq Llama model name.")
+    backend: str | None = Field(
+        default=None, description="LLM backend to use: groq or azure (falls back to env LLM_BACKEND)."
+    )
     temperature: float = Field(0.2, ge=0.0, le=1.0, description="LLM temperature.")
     return_contexts: bool = Field(
         False, description="Return retrieved contexts alongside the answer."
@@ -102,22 +107,60 @@ def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperatu
     context_block = build_context(contexts)
     user_prompt = f"Question: {query}\n\nContext:\n{context_block}\n\nAnswer:"
 
-    llm = ChatGroq(model_name=model_name, temperature=temperature)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    llm = get_llm(model_name=model_name, temperature=temperature)
     try:
         response = llm.invoke(messages)
+    except HTTPException:
+        raise
     except Exception as exc:
         suggestion = (
-            "Groq model may be deprecated. Try --model llama-3.3-70b-versatile or --model llama-3.3-8b-instant."
+            "LLM call failed. For Groq, try llama-3.3-70b-versatile or llama-3.3-8b-instant. "
+            "For Azure, check deployment/endpoint/api key."
         )
         raise HTTPException(status_code=502, detail=f"LLM call failed ({model_name}): {exc}\n{suggestion}")
     return response.content.strip()
+
+
+def azure_llm_config(requested_model: str | None = None) -> Tuple[str, str, str, str]:
+    deployment = requested_model or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    missing = [name for name, val in (
+        ("AZURE_OPENAI_DEPLOYMENT", deployment),
+        ("AZURE_OPENAI_ENDPOINT", endpoint),
+        ("AZURE_OPENAI_API_KEY", api_key),
+    ) if not val]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Missing Azure config: {', '.join(missing)}")
+    return deployment, endpoint, api_key, api_version  # type: ignore[return-value]
+
+
+def get_llm(model_name: str, temperature: float):
+    backend = getattr(app.state, "llm_backend", DEFAULT_LLM_BACKEND)
+    if backend == "azure":
+        deployment, endpoint, api_key, api_version = azure_llm_config(model_name)
+        return AzureChatOpenAI(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version=api_version,
+            deployment_name=deployment,
+            temperature=temperature,
+        )
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not set in the environment.")
+    return ChatGroq(model_name=model_name, temperature=temperature)
 
 
 def load_resources(app: FastAPI) -> None:
     index_path = Path(os.getenv("FAISS_INDEX_PATH", DEFAULT_INDEX_PATH))
     meta_path = Path(os.getenv("FAISS_METADATA_PATH", DEFAULT_META_PATH))
     embed_model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBED_MODEL)
+    llm_backend = os.getenv("LLM_BACKEND", DEFAULT_LLM_BACKEND).lower()
+    app.state.llm_backend = llm_backend
 
     if not index_path.exists():
         raise FileNotFoundError(f"FAISS index not found at {index_path}")
@@ -139,14 +182,15 @@ def load_resources(app: FastAPI) -> None:
     app.state.metadata = metadata
     app.state.embed_model = embed_model
     app.state.embedding_model_name = embed_model_name
+    app.state.default_llm_model = os.getenv(
+        "DEFAULT_LLM_MODEL",
+        DEFAULT_LLM_MODEL if llm_backend == "groq" else os.getenv("AZURE_OPENAI_DEPLOYMENT", ""),
+    )
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    groq_key = os.getenv("GROQ_API_KEY")
-    if not groq_key:
-        raise RuntimeError("GROQ_API_KEY is not set in the environment.")
     load_resources(app)
 
 
@@ -163,6 +207,8 @@ def health() -> Dict[str, object]:
         "embedding_model": getattr(app.state, "embedding_model_name", DEFAULT_EMBED_MODEL),
         "index_path": getattr(app.state, "index_path", str(DEFAULT_INDEX_PATH)),
         "metadata_path": getattr(app.state, "metadata_path", str(DEFAULT_META_PATH)),
+        "llm_backend": getattr(app.state, "llm_backend", DEFAULT_LLM_BACKEND),
+        "default_llm_model": getattr(app.state, "default_llm_model", DEFAULT_LLM_MODEL),
     }
 
 
@@ -171,6 +217,8 @@ def query(request: QueryRequest) -> QueryResponse:
     index = getattr(app.state, "index", None)
     metadata = getattr(app.state, "metadata", None)
     embed_model = getattr(app.state, "embed_model", None)
+    llm_backend = (request.backend or getattr(app.state, "llm_backend", DEFAULT_LLM_BACKEND)).lower()
+    app.state.llm_backend = llm_backend
 
     if index is None or metadata is None or embed_model is None:
         raise HTTPException(status_code=500, detail="Resources not loaded.")

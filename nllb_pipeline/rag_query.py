@@ -3,13 +3,15 @@
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import faiss
 import numpy as np
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+from langchain_openai import AzureChatOpenAI
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 load_dotenv()
@@ -64,6 +66,34 @@ def format_hit(idx: int, score: float, rec: Dict) -> str:
     return f"id={idx} score={score:.4f} source={meta.get('source_url') or meta.get('source_path') or 'n/a'}\n{text}"
 
 
+class AzureLLM:
+    """Simple wrapper to configure Azure OpenAI chat."""
+
+    def __init__(
+        self,
+        deployment: str,
+        endpoint: str,
+        api_key: str,
+        api_version: str = "2024-08-01-preview",
+        temperature: float = 0.2,
+    ) -> None:
+        self.deployment = deployment
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.api_version = api_version
+        self.temperature = temperature
+        self.client = AzureChatOpenAI(
+            azure_endpoint=self.endpoint,
+            api_key=self.api_key,
+            api_version=self.api_version,
+            deployment_name=self.deployment,
+            temperature=self.temperature,
+        )
+
+    def invoke(self, messages):
+        return self.client.invoke(messages)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="End-to-end RAG query using FAISS retrieval + Llama (Groq).")
     parser.add_argument(
@@ -98,6 +128,19 @@ def parse_args() -> argparse.Namespace:
         help="Groq Llama model name (e.g., llama-3.3-70b-versatile, llama-3.3-8b-instant).",
     )
     parser.add_argument(
+        "--llm-backend",
+        type=str,
+        choices=["groq", "azure"],
+        default="groq",
+        help="LLM provider (groq or azure).",
+    )
+    parser.add_argument(
+        "--azure-deployment",
+        type=str,
+        default=None,
+        help="Azure OpenAI deployment name (falls back to AZURE_OPENAI_DEPLOYMENT).",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=0.2,
@@ -111,7 +154,33 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperature: float) -> str:
+def build_llm(args: argparse.Namespace) -> Tuple[object, str]:
+    if args.llm_backend == "azure":
+        deployment = args.azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+        missing = [name for name, val in (
+            ("AZURE_OPENAI_DEPLOYMENT", deployment),
+            ("AZURE_OPENAI_ENDPOINT", endpoint),
+            ("AZURE_OPENAI_API_KEY", api_key),
+        ) if not val]
+        if missing:
+            raise SystemExit(f"Missing Azure config: {', '.join(missing)}")
+        llm = AzureLLM(
+            deployment=deployment,
+            endpoint=endpoint,  # type: ignore[arg-type]
+            api_key=api_key,  # type: ignore[arg-type]
+            api_version=api_version,
+            temperature=args.temperature,
+        )
+        return llm, deployment or "azure"
+
+    llm = ChatGroq(model_name=args.model, temperature=args.temperature)
+    return llm, args.model
+
+
+def answer_with_llm(query: str, contexts: List[Dict], llm: object, model_label: str) -> str:
     system_prompt = (
         "You are a retrieval QA assistant. Use only the provided context snippets to answer the question. "
         "If the context is insufficient, say you do not have enough information. Be concise."
@@ -119,21 +188,23 @@ def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperatu
     context_block = build_context(contexts)
     user_prompt = f"Question: {query}\n\nContext:\n{context_block}\n\nAnswer:"
 
-    llm = ChatGroq(model_name=model_name, temperature=temperature)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     try:
         response = llm.invoke(messages)
     except Exception as exc:  # surfacing deprecation/availability errors
         suggestion = (
-            "Groq model may be deprecated. Try --model llama-3.3-70b-versatile or --model llama-3.3-8b-instant."
+            "LLM call failed. For Groq, try --model llama-3.3-70b-versatile or llama-3.3-8b-instant. "
+            "For Azure, verify deployment/endpoint/API key and version."
         )
-        raise SystemExit(f"LLM call failed ({model_name}): {exc}\n{suggestion}") from exc
+        raise SystemExit(f"LLM call failed ({model_label}): {exc}\n{suggestion}") from exc
     return response.content.strip()
 
 
 def run() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    llm, model_label = build_llm(args)
 
     query_text = pick_query(args)
     logging.info("Loading index from %s", args.index)
@@ -160,7 +231,7 @@ def run() -> None:
             print(format_hit(rec.get("id", -1), rec.get("score", 0.0), rec))
             print()
 
-    answer = answer_with_llm(query_text, retrieved, args.model, args.temperature)
+    answer = answer_with_llm(query_text, retrieved, llm, model_label)
 
     print(f"Query: {query_text}\n")
     print("Answer:\n" + answer)

@@ -14,7 +14,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 from docx import Document
 from langdetect import DetectorFactory, LangDetectException, detect
-from PIL import Image
+from PIL import Image, ImageOps
 from tqdm import tqdm
 
 # langdetect can be non-deterministic unless we set the seed.
@@ -25,6 +25,10 @@ SUPPORTED_TEXT_EXTS = {".txt"}
 SUPPORTED_HTML_EXTS = {".html", ".htm"}
 SUPPORTED_DOC_EXTS = {".docx"}
 SUPPORTED_PDF_EXTS = {".pdf"}
+
+TESSERACT_CMD = os.getenv("TESSERACT_CMD")
+if TESSERACT_CMD:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 
 @dataclass
@@ -78,13 +82,16 @@ def extract_docx_file(path: Path) -> str:
     return clean_text("\n".join(parts))
 
 
-def ocr_image(img: Image.Image) -> str:
-    return pytesseract.image_to_string(img)
+def ocr_image(img: Image.Image, psm: int = 6) -> str:
+    """Run Tesseract OCR with a layout-friendly default page segmentation mode."""
+    return pytesseract.image_to_string(img, config=f"--oem 3 --psm {psm}")
 
 
 def extract_image_file(path: Path) -> str:
     with Image.open(path) as img:
-        return clean_text(ocr_image(img))
+        normalized = ImageOps.exif_transpose(img).convert("RGB")
+        gray = normalized.convert("L")
+        return clean_text(ocr_image(gray, psm=6))
 
 
 def extract_pdf_file(path: Path, ocr_page_limit: int = 2) -> str:
@@ -101,7 +108,8 @@ def extract_pdf_file(path: Path, ocr_page_limit: int = 2) -> str:
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages[:ocr_page_limit]:
             page_image = page.to_image(resolution=300)
-            ocr_parts.append(ocr_image(page_image.original))
+            gray = page_image.original.convert("L")
+            ocr_parts.append(ocr_image(gray, psm=6))
     return clean_text("\n".join(ocr_parts))
 
 
