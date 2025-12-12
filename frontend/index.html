@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NepEd Bot</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap");
+    :root {
+      --bg: radial-gradient(circle at 20% 20%, #102a43 0, #0b1d2b 30%, #0a1622 60%);
+      --card: rgba(16, 28, 44, 0.85);
+      --accent: #23c6b8;
+      --accent-2: #ffb55c;
+      --muted: #8ba0b5;
+      --text: #e8edf2;
+      --border: rgba(255, 255, 255, 0.08);
+      --shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 32px 16px 48px;
+    }
+    .shell {
+      width: min(1180px, 100%);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: -0.02em;
+    }
+    .tagline {
+      color: var(--muted);
+      margin: 6px 0 0;
+      font-size: 14px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    textarea { min-height: 140px; resize: vertical; }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(35, 198, 184, 0.2);
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: none;
+      cursor: pointer;
+      border-radius: 12px;
+      font-weight: 600;
+      padding: 11px 16px;
+      color: #0c161f;
+      background: linear-gradient(120deg, var(--accent), #1da7a2);
+      box-shadow: 0 14px 30px rgba(35, 198, 184, 0.35);
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+    }
+    button.secondary {
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text);
+      box-shadow: none;
+      border: 1px solid var(--border);
+    }
+    button:hover { transform: translateY(-1px) scale(1.01); }
+    button:active { transform: translateY(0); }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .status {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.04);
+    }
+    .dot.ok { background: #2ddf8e; }
+    .dot.bad { background: #ff7b7b; }
+    .answer {
+      font-size: 16px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      margin: 8px 0 0;
+    }
+    .contexts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .context {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .context h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--accent-2);
+    }
+    .context .meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .small {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 6px 0 0;
+    }
+    .inline {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .loader {
+      width: 18px;
+      height: 18px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error {
+      color: #ff9b9b;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    #backend > option
+    {
+      color: black;
+    }
+
+
+
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="panel">
+      <div class="header">
+        <div>
+          <h1>NepEd BOT</h1>
+          <p class="tagline">Query your FAISS-backed NLLB translations with Groq or Azure GPT.</p>
+        </div>
+        <div class="status">
+          <span class="pill">
+            <span class="dot" id="healthDot"></span>
+            <span id="healthText">Health unknown</span>
+          </span>
+          <button class="secondary" onclick="checkHealth()">Refresh health</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="grid">
+        <div>
+          <label for="apiBase">API base URL</label>
+          <input id="apiBase" type="text" value="http://localhost:8000" />
+          <p class="small">FastAPI server base; keep same-origin to avoid CORS.</p>
+        </div>
+        <div>
+          <label for="backend">Backend</label>
+          <select id="backend">
+            <option value="azure">Azure OpenAI</option>
+            <option value="groq">Groq</option>
+          </select>
+          <p class="small">Groq uses `model` as Groq name; Azure uses deployment name.</p>
+        </div>
+        <div>
+          <label for="model">Model / Deployment</label>
+          <input id="model" type="text" placeholder="llama-3.3-70b-versatile or your-azure-deployment" />
+        </div>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(150px,1fr));">
+          <div>
+            <label for="topk">Top-K</label>
+            <input id="topk" type="number" value="5" min="1" max="20" />
+          </div>
+          <div>
+            <label for="temperature">Temperature</label>
+            <input id="temperature" type="number" step="0.1" value="0.2" min="0" max="1" />
+          </div>
+          <div class="inline" style="margin-top: 22px;">
+            <input id="returnContexts" type="checkbox" checked />
+            <label for="returnContexts" style="margin:0;">Return contexts</label>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top: 12px;">
+        <label for="query">Your question</label>
+        <textarea id="query" placeholder="Ask anything drawn from your translated corpus..."></textarea>
+      </div>
+      <div class="controls" style="margin-top: 12px;">
+        <button onclick="runQuery()">Run query</button>
+        <div class="inline small" id="statusLine"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="inline" style="justify-content: space-between;">
+        <div>
+          <div class="pill">Answer</div>
+          <div id="answer" class="answer"></div>
+          <div id="error" class="error"></div>
+        </div>
+        <div class="pill" id="timing"></div>
+      </div>
+      <div id="contexts" class="contexts"></div>
+    </div>
+  </div>
+
+  <script>
+    const healthDot = document.getElementById("healthDot");
+    const healthText = document.getElementById("healthText");
+    const statusLine = document.getElementById("statusLine");
+    const answerEl = document.getElementById("answer");
+    const contextsEl = document.getElementById("contexts");
+    const errorEl = document.getElementById("error");
+    const timingEl = document.getElementById("timing");
+
+    function apiUrl(path) {
+      const base = document.getElementById("apiBase").value.trim().replace(/\/$/, "");
+      return base + path;
+    }
+
+    async function checkHealth() {
+      setStatus("Checking health...");
+      healthDot.className = "dot";
+      try {
+        const res = await fetch(apiUrl("/health"));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        healthDot.className = "dot ok";
+        healthText.textContent = `Index ${data.index_size || 0} vectors · Backend ${data.llm_backend || "groq"}`;
+        setStatus("Health ok");
+      } catch (err) {
+        healthDot.className = "dot bad";
+        healthText.textContent = "Health check failed";
+        setStatus(err.message || "Health error");
+      }
+    }
+
+    function setStatus(msg, loading=false) {
+      statusLine.innerHTML = loading ? `<span class="loader"></span>${msg}` : msg;
+    }
+
+    function renderContexts(hits=[]) {
+      contextsEl.innerHTML = "";
+      if (!hits.length) return;
+      hits.forEach((hit, idx) => {
+        const meta = hit.metadata || {};
+        const source = meta.source_url || meta.source_path || meta.source_domain || "unknown";
+        const div = document.createElement("div");
+        div.className = "context";
+        div.innerHTML = `
+          <h4>[${idx + 1}] score ${hit.score?.toFixed?.(4) ?? hit.score}</h4>
+          <div>${(hit.text || "").slice(0, 600)}</div>
+          <div class="meta">${source}</div>
+        `;
+        contextsEl.appendChild(div);
+      });
+    }
+
+    async function runQuery() {
+      const query = document.getElementById("query").value.trim();
+      const top_k = parseInt(document.getElementById("topk").value || "5", 10);
+      const temperature = parseFloat(document.getElementById("temperature").value || "0.2");
+      const model = document.getElementById("model").value.trim();
+      const backend = document.getElementById("backend").value;
+      const return_contexts = document.getElementById("returnContexts").checked;
+
+      if (!query) {
+        setStatus("Enter a question to run the query.");
+        return;
+      }
+
+      const payload = { query, top_k, temperature, return_contexts };
+      if (backend === "azure") {
+        payload.backend = "azure";
+        if (model) payload.model = model;
+      } else {
+        payload.backend = "groq";
+        if (model) payload.model = model;
+      }
+
+      setStatus("Running query...", true);
+      answerEl.textContent = "";
+      contextsEl.innerHTML = "";
+      errorEl.textContent = "";
+      timingEl.textContent = "";
+      const started = performance.now();
+
+      try {
+        const res = await fetch(apiUrl("/query"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const elapsed = performance.now() - started;
+        timingEl.textContent = `${Math.round(elapsed)} ms`;
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        answerEl.textContent = data.answer || "(no answer)";
+        renderContexts(data.hits || []);
+        setStatus("Done");
+      } catch (err) {
+        errorEl.textContent = err.message || "Request failed";
+        setStatus("Failed");
+      }
+    }
+
+    // Kick off initial health check
+    checkHealth();
+  </script>
+</body>
+</html>
