@@ -85,3 +85,6 @@ Example query:
 
 http://localhost:8000/docs 
 ```
+
+## Optional frontend (dev)
+- Static UI lives in `frontend/`. When present, the API serves it at `/ui` (CORS open for local dev). Launch the API and visit: http://localhost:8000/ui/

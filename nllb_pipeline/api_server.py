@@ -3,17 +3,24 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections import deque
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Deque, Dict, List, Tuple
 
 import faiss
 import numpy as np
-from fastapi import FastAPI, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -24,13 +31,35 @@ DEFAULT_INDEX_PATH = Path("vector_store/faiss_sentences/index.faiss")
 DEFAULT_META_PATH = Path("vector_store/faiss_sentences/metadata.jsonl")
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
+DEFAULT_LLM_BACKEND = os.getenv("LLM_BACKEND", "azure")
+FRONTEND_DIR = Path("frontend")
+HISTORY_LIMIT = int(os.getenv("CONVERSATION_HISTORY_LIMIT", "6"))
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    load_resources(app)
+    yield
+
 
 app = FastAPI(
-    title="RAG API",
-    description="FAISS retrieval + Groq Llama answer generation.",
+    title="NepEd Bot API",
+    description="Your guide to bachelor study pathways",
     version="0.1.0",
+    lifespan=lifespan,
 )
+
+# CORS for local dev (e.g., http://localhost:3000 or file://)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve static frontend if present
+if FRONTEND_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
 class QueryRequest(BaseModel):
@@ -43,6 +72,12 @@ class QueryRequest(BaseModel):
     temperature: float = Field(0.2, ge=0.0, le=1.0, description="LLM temperature.")
     return_contexts: bool = Field(
         False, description="Return retrieved contexts alongside the answer."
+    )
+    session_id: str | None = Field(
+        default=None, description="Conversation session identifier to preserve chat history."
+    )
+    session_id: str | None = Field(
+        default=None, description="Conversation session identifier to preserve chat history."
     )
 
 
@@ -99,7 +134,13 @@ def build_context(records: List[Dict]) -> str:
     return "\n\n".join(lines)
 
 
-def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperature: float) -> str:
+def answer_with_llm(
+    query: str,
+    contexts: List[Dict],
+    model_name: str,
+    temperature: float,
+    history: List[Dict[str, str]] | None = None,
+) -> str:
     system_prompt = (
         "You are a retrieval QA assistant. Use only the provided context snippets to answer the question. "
         "If the context is insufficient, say you do not have enough information. Be concise."
@@ -107,7 +148,18 @@ def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperatu
     context_block = build_context(contexts)
     user_prompt = f"Question: {query}\n\nContext:\n{context_block}\n\nAnswer:"
 
-    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    messages = [SystemMessage(content=system_prompt)]
+    if history:
+        from langchain_core.messages import AIMessage
+
+        for turn in history:
+            role = turn.get("role")
+            content = turn.get("content", "")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+    messages.append(HumanMessage(content=user_prompt))
     llm = get_llm(model_name=model_name, temperature=temperature)
     try:
         response = llm.invoke(messages)
@@ -123,7 +175,9 @@ def answer_with_llm(query: str, contexts: List[Dict], model_name: str, temperatu
 
 
 def azure_llm_config(requested_model: str | None = None) -> Tuple[str, str, str, str]:
-    deployment = requested_model or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    logging.info(f"azure_llm_config: {requested_model=}")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", requested_model)
+    logging.info(f"azure_llm_config: {deployment=}")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
@@ -186,12 +240,9 @@ def load_resources(app: FastAPI) -> None:
         "DEFAULT_LLM_MODEL",
         DEFAULT_LLM_MODEL if llm_backend == "groq" else os.getenv("AZURE_OPENAI_DEPLOYMENT", ""),
     )
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    load_resources(app)
+    app.state.sessions: Dict[str, Deque[Dict[str, str]]] = {}
+    app.state.sessions: Dict[str, Deque[Dict[str, str]]] = {}
+    logger.info(f"Model: {app.state.default_llm_model}")
 
 
 @app.get("/health")
@@ -207,9 +258,17 @@ def health() -> Dict[str, object]:
         "embedding_model": getattr(app.state, "embedding_model_name", DEFAULT_EMBED_MODEL),
         "index_path": getattr(app.state, "index_path", str(DEFAULT_INDEX_PATH)),
         "metadata_path": getattr(app.state, "metadata_path", str(DEFAULT_META_PATH)),
-        "llm_backend": getattr(app.state, "llm_backend", DEFAULT_LLM_BACKEND),
+        "llm_backend": getattr(app.state,  "llm_backend", DEFAULT_LLM_BACKEND),
         "default_llm_model": getattr(app.state, "default_llm_model", DEFAULT_LLM_MODEL),
+        "history_limit": HISTORY_LIMIT,
     }
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    if FRONTEND_DIR.exists():
+        return RedirectResponse(url="/ui/")
+    return RedirectResponse(url="/docs")
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -219,6 +278,8 @@ def query(request: QueryRequest) -> QueryResponse:
     embed_model = getattr(app.state, "embed_model", None)
     llm_backend = (request.backend or getattr(app.state, "llm_backend", DEFAULT_LLM_BACKEND)).lower()
     app.state.llm_backend = llm_backend
+    logger.info(f"{llm_backend=}, {request.backend=}")
+    session_id = request.session_id or "default"
 
     if index is None or metadata is None or embed_model is None:
         raise HTTPException(status_code=500, detail="Resources not loaded.")
@@ -237,8 +298,11 @@ def query(request: QueryRequest) -> QueryResponse:
         rec["score"] = float(score)
         retrieved.append(rec)
 
+    history_store: Deque[Dict[str, str]] = app.state.sessions.setdefault(session_id, deque(maxlen=HISTORY_LIMIT))
+    history_list = list(history_store)
+
     try:
-        answer = answer_with_llm(request.query, retrieved, request.model, request.temperature)
+        answer = answer_with_llm(request.query, retrieved, request.model, request.temperature, history_list)
     except HTTPException:
         raise
     except Exception as exc:
@@ -257,6 +321,10 @@ def query(request: QueryRequest) -> QueryResponse:
         )
         for r in retrieved
     ]
+
+    # update conversation history
+    history_store.append({"role": "user", "content": request.query})
+    history_store.append({"role": "assistant", "content": answer})
 
     return QueryResponse(
         query=request.query,

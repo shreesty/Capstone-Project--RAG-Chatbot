@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 import torch
-from openai import AzureOpenAI, BadRequestError
+from openai import AzureOpenAI
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from tqdm import tqdm
 from dotenv import load_dotenv
@@ -88,15 +88,12 @@ class AzureChatTranslator:
         api_version: Optional[str] = None,
         temperature: float = 0.0,
         system_prompt: Optional[str] = None,
-        max_output_tokens: Optional[int] = None,
     ) -> None:
-        # accept multiple common env var spellings
-        self.deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT_URL")
-        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_KEY")
+        self.deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
+        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
         self.temperature = temperature
-        self.max_output_tokens = max_output_tokens
         self.system_prompt = system_prompt or "You are a translation engine. Translate the user's text to English. Return only the translation."
 
         missing = [name for name, val in (
@@ -116,33 +113,14 @@ class AzureChatTranslator:
     def translate_batch(self, texts: List[str]) -> List[str]:
         translations: List[str] = []
         for text in texts:
-            try:
-                resp = self.client.chat.completions.create(
-                    model=self.deployment,
-                    messages=[
-                        {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": text},
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
-                )
-            except BadRequestError as exc:
-                # Azure content filter or similar; pass through original text so downstream steps continue.
-                if "content_filter" in str(exc):
-                    logging.warning(
-                        "Azure content filter hit; passing through original text. deployment=%s endpoint=%s",
-                        self.deployment,
-                        self.endpoint,
-                    )
-                    translations.append(text)
-                    continue
-                raise RuntimeError(
-                    f"Azure translation failed (deployment={self.deployment}, endpoint={self.endpoint}, api_version={self.api_version}): {exc}"
-                ) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"Azure translation failed (deployment={self.deployment}, endpoint={self.endpoint}, api_version={self.api_version}): {exc}"
-                ) from exc
+            resp = self.client.chat.completions.create(
+                model=self.deployment,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                temperature=self.temperature,
+            )
             choice = resp.choices[0].message.content if resp.choices else ""
             translations.append((choice or "").strip())
         return translations
@@ -182,36 +160,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Azure OpenAI deployment name for GPT-4.0-mini (falls back to AZURE_OPENAI_DEPLOYMENT).",
-    )
-    parser.add_argument(
-        "--azure-endpoint",
-        type=str,
-        default=None,
-        help="Azure OpenAI endpoint (falls back to AZURE_OPENAI_ENDPOINT).",
-    )
-    parser.add_argument(
-        "--azure-api-key",
-        type=str,
-        default=None,
-        help="Azure OpenAI API key (falls back to AZURE_OPENAI_API_KEY).",
-    )
-    parser.add_argument(
-        "--azure-api-version",
-        type=str,
-        default=None,
-        help="Azure OpenAI API version (falls back to AZURE_OPENAI_API_VERSION or 2024-08-01-preview).",
-    )
-    parser.add_argument(
-        "--azure-temperature",
-        type=float,
-        default=0.0,
-        help="Temperature for Azure translation calls (default 0.0).",
-    )
-    parser.add_argument(
-        "--azure-max-output-tokens",
-        type=int,
-        default=None,
-        help="Max tokens for Azure translation responses.",
     )
     parser.add_argument(
         "--source-lang-filter",
@@ -273,11 +221,6 @@ def main() -> None:
     if args.translator_backend == "azure":
         azure_translator = AzureChatTranslator(
             deployment=args.azure_deployment,
-            endpoint=args.azure_endpoint,
-            api_key=args.azure_api_key,
-            api_version=args.azure_api_version,
-            temperature=args.azure_temperature,
-            max_output_tokens=args.azure_max_output_tokens,
         )
         logging.info("Using Azure OpenAI deployment=%s endpoint=%s", azure_translator.deployment, azure_translator.endpoint)
     else:
