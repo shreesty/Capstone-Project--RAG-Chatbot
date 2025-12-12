@@ -16,7 +16,8 @@ python nllb_pipeline/extract.py
 ## Stage 2: Sentence splitting (ready)
 - Script: `nllb_pipeline/split_sentences.py`
 - Input: `processed_data/extracted_documents.jsonl`
-- Output: `processed_data/sentences.jsonl` with per-sentence records `{uid, doc_id, sentence_index, source_path, source_domain, source_url, kind, doc_language, sentence}`.
+- Output: `processed_data/sentences.jsonl` with overlap-aware chunks `{uid, doc_id, sentence_index, source_path, source_domain, source_url, kind, doc_language, sentence}`.
+ - Uses LangChain `RecursiveCharacterTextSplitter` with configurable `--chunk-size`, `--chunk-overlap`, `--min-chars`, and optional `--separators` (comma-separated, defaults to sentence-biased separators).
 
 Run:
 ```bash
