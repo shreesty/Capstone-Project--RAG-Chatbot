@@ -28,8 +28,16 @@
       justify-content: center;
       padding: 32px 16px 48px;
     }
+    .layout {
+      width: min(1280px, 100%);
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: 1fr; }
+    }
     .shell {
-      width: min(1180px, 100%);
       display: grid;
       grid-template-columns: 1fr;
       gap: 16px;
@@ -41,6 +49,11 @@
       padding: 18px 20px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(6px);
+    }
+    .sidebar {
+      height: fit-content;
+      position: sticky;
+      top: 20px;
     }
     .header {
       display: flex;
@@ -191,87 +204,146 @@
       font-size: 13px;
       margin-top: 8px;
     }
-    #backend > option
-    {
-      color: black;
+    #backend > option { color: black; }
+    .session-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .session-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.03);
+      transition: border-color 0.15s ease, transform 0.12s ease;
     }
-
-
-
+    .session-card.active {
+      border-color: var(--accent);
+      box-shadow: 0 10px 26px rgba(35, 198, 184, 0.18);
+      transform: translateY(-1px);
+    }
+    .session-card h4 {
+      margin: 0;
+      font-size: 14px;
+      color: #e6f5ff;
+      letter-spacing: -0.01em;
+    }
+    .session-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .chat {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .bubble {
+      padding: 12px 14px;
+      border-radius: 14px;
+      max-width: 100%;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .bubble.user {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+    }
+    .bubble.bot {
+      background: rgba(35, 198, 184, 0.1);
+      border: 1px solid rgba(35, 198, 184, 0.4);
+    }
+    .chat h4 { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <div class="panel">
-      <div class="header">
+  <div class="layout">
+    <aside class="panel sidebar">
+      <div class="header" style="align-items: flex-start;">
         <div>
-          <h1>NepEd BOT</h1>
-          <p class="tagline">Query your FAISS-backed NLLB translations with Groq or Azure GPT.</p>
+          <h2 style="margin:0;">Conversations</h2>
+          <p class="small" style="margin-top:6px;">Pick a chat to resume or start a new one.</p>
         </div>
-        <div class="status">
-          <span class="pill">
-            <span class="dot" id="healthDot"></span>
-            <span id="healthText">Health unknown</span>
-          </span>
-          <button class="secondary" onclick="checkHealth()">Refresh health</button>
+        <button class="secondary" onclick="newChat()">New chat</button>
+      </div>
+      <div id="sessionList" class="session-list"></div>
+    </aside>
+
+    <div class="shell">
+      <div class="panel">
+        <div class="header">
+          <div>
+            <h1 id="sessionTitle">New chat</h1>
+            <p class="tagline">RAG answers backed by your FAISS index.</p>
+          </div>
+          <div class="status">
+            <span class="pill">
+              <span class="dot" id="healthDot"></span>
+              <span id="healthText">Health unknown</span>
+            </span>
+            <button class="secondary" onclick="checkHealth()">Refresh health</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="panel">
-      <div class="grid">
-        <div>
-          <label for="apiBase">API base URL</label>
-          <input id="apiBase" type="text" value="http://localhost:8000" />
-          <p class="small">FastAPI server base; keep same-origin to avoid CORS.</p>
-        </div>
-        <div>
-          <label for="backend">Backend</label>
-          <select id="backend">
-            <option value="azure">Azure OpenAI</option>
-            <option value="groq">Groq</option>
-          </select>
-          <p class="small">Groq uses `model` as Groq name; Azure uses deployment name.</p>
-        </div>
-        <div>
-          <label for="model">Model / Deployment</label>
-          <input id="model" type="text" placeholder="llama-3.3-70b-versatile or your-azure-deployment" />
-        </div>
-        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(150px,1fr));">
+      <div class="panel">
+        <div class="grid">
           <div>
-            <label for="topk">Top-K</label>
-            <input id="topk" type="number" value="5" min="1" max="20" />
+            <label for="apiBase">API base URL</label>
+            <input id="apiBase" type="text" value="http://localhost:8000" />
+            <p class="small">FastAPI server base; keep same-origin to avoid CORS.</p>
           </div>
           <div>
-            <label for="temperature">Temperature</label>
-            <input id="temperature" type="number" step="0.1" value="0.2" min="0" max="1" />
+            <label for="backend">Backend</label>
+            <select id="backend">
+              <option value="azure">Azure OpenAI</option>
+              <option value="groq">Groq</option>
+            </select>
+            <p class="small">Groq uses `model` as Groq name; Azure uses deployment name.</p>
           </div>
-          <div class="inline" style="margin-top: 22px;">
-            <input id="returnContexts" type="checkbox" checked />
-            <label for="returnContexts" style="margin:0;">Return contexts</label>
+          <div>
+            <label for="model">Model / Deployment</label>
+            <input id="model" type="text" placeholder="llama-3.3-70b-versatile or your-azure-deployment" />
+          </div>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(150px,1fr));">
+            <div>
+              <label for="topk">Top-K</label>
+              <input id="topk" type="number" value="5" min="1" max="20" />
+            </div>
+            <div>
+              <label for="temperature">Temperature</label>
+              <input id="temperature" type="number" step="0.1" value="0.2" min="0" max="1" />
+            </div>
+            <div class="inline" style="margin-top: 22px;">
+              <input id="returnContexts" type="checkbox" checked />
+              <label for="returnContexts" style="margin:0;">Return contexts</label>
+            </div>
           </div>
         </div>
+        <div style="margin-top: 12px;">
+          <label for="query">Your question</label>
+          <textarea id="query" placeholder="Ask anything drawn from your translated corpus..."></textarea>
+        </div>
+        <div class="controls" style="margin-top: 12px;">
+          <button onclick="runQuery()">Run query</button>
+          <div class="inline small" id="statusLine"></div>
+        </div>
       </div>
-      <div style="margin-top: 12px;">
-        <label for="query">Your question</label>
-        <textarea id="query" placeholder="Ask anything drawn from your translated corpus..."></textarea>
-      </div>
-      <div class="controls" style="margin-top: 12px;">
-        <button onclick="runQuery()">Run query</button>
-        <div class="inline small" id="statusLine"></div>
-      </div>
-    </div>
 
-    <div class="panel">
-      <div class="inline" style="justify-content: space-between;">
-        <div>
-          <div class="pill">Answer</div>
-          <div id="answer" class="answer"></div>
-          <div id="error" class="error"></div>
+      <div class="panel">
+        <div class="inline" style="justify-content: space-between; align-items: flex-start;">
+          <div>
+            <div class="pill">Conversation</div>
+            <div id="history" class="chat"></div>
+            <div id="error" class="error"></div>
+          </div>
+          <div class="pill" id="timing"></div>
         </div>
-        <div class="pill" id="timing"></div>
       </div>
-      <div id="contexts" class="contexts"></div>
+
+      <div class="panel">
+        <div class="pill">Latest answer</div>
+        <div id="answer" class="answer"></div>
+        <div id="contexts" class="contexts"></div>
+      </div>
     </div>
   </div>
 
@@ -283,6 +355,14 @@
     const contextsEl = document.getElementById("contexts");
     const errorEl = document.getElementById("error");
     const timingEl = document.getElementById("timing");
+    const sessionListEl = document.getElementById("sessionList");
+    const historyEl = document.getElementById("history");
+    const sessionTitleEl = document.getElementById("sessionTitle");
+
+    let sessions = [];
+    let currentSessionId = null;
+    let currentSessionName = "New chat";
+    let currentHistory = [];
 
     function apiUrl(path) {
       const base = document.getElementById("apiBase").value.trim().replace(/\/$/, "");
@@ -327,6 +407,98 @@
       });
     }
 
+    function renderHistory(history=[]) {
+      historyEl.innerHTML = "";
+      if (!history.length) {
+        historyEl.innerHTML = `<p class="small">No messages yet.</p>`;
+        return;
+      }
+      history.forEach((turn) => {
+        const wrap = document.createElement("div");
+        wrap.className = "bubble " + (turn.role === "user" ? "user" : "bot");
+        wrap.innerHTML = `<h4>${turn.role === "user" ? "You" : "NepEd Bot"}</h4><div>${turn.content}</div>`;
+        historyEl.appendChild(wrap);
+      });
+    }
+
+    function renderSessionList() {
+      sessionListEl.innerHTML = "";
+      if (!sessions.length) {
+        sessionListEl.innerHTML = `<p class="small">No conversations yet.</p>`;
+        return;
+      }
+      sessions.forEach((s) => {
+        const div = document.createElement("div");
+        div.className = "session-card" + (s.id === currentSessionId ? " active" : "");
+        div.onclick = () => openSession(s.id);
+        const updated = new Date(s.updated_at || s.created_at || Date.now()).toLocaleString();
+        div.innerHTML = `
+          <h4>${s.name || "Conversation"}</h4>
+          <div class="session-meta">${updated}</div>
+        `;
+        sessionListEl.appendChild(div);
+      });
+    }
+
+    async function loadSessions() {
+      try {
+        const res = await fetch(apiUrl("/sessions"));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        sessions = data.sessions || [];
+        renderSessionList();
+        if (!currentSessionId && sessions.length) {
+          await openSession(sessions[0].id);
+        }
+      } catch (err) {
+        console.warn("Failed to load sessions", err);
+      }
+    }
+
+    async function openSession(id) {
+      setStatus("Loading session...");
+      try {
+        const res = await fetch(apiUrl(`/sessions/${id}`));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        currentSessionId = data.session.id;
+        currentSessionName = data.session.name;
+        currentHistory = data.history || [];
+        sessionTitleEl.textContent = currentSessionName;
+        renderHistory(currentHistory);
+        const lastAssistant = [...currentHistory].reverse().find((t) => t.role === "assistant");
+        answerEl.textContent = lastAssistant?.content || "";
+        contextsEl.innerHTML = "";
+        renderSessionList();
+        setStatus("Loaded session");
+      } catch (err) {
+        errorEl.textContent = err.message || "Failed to load session";
+        setStatus("Failed");
+      }
+    }
+
+    async function newChat() {
+      setStatus("Creating chat...", true);
+      try {
+        const res = await fetch(apiUrl("/sessions"), { method: "POST" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        currentSessionId = data.id;
+        currentSessionName = data.name;
+        currentHistory = [];
+        sessionTitleEl.textContent = currentSessionName;
+        renderHistory([]);
+        answerEl.textContent = "";
+        contextsEl.innerHTML = "";
+        errorEl.textContent = "";
+        await loadSessions();
+        setStatus("New chat created");
+      } catch (err) {
+        errorEl.textContent = err.message || "Could not create chat";
+        setStatus("Failed");
+      }
+    }
+
     async function runQuery() {
       const query = document.getElementById("query").value.trim();
       const top_k = parseInt(document.getElementById("topk").value || "5", 10);
@@ -341,6 +513,8 @@
       }
 
       const payload = { query, top_k, temperature, return_contexts };
+      if (currentSessionId) payload.session_id = currentSessionId;
+      if (currentSessionName) payload.session_name = currentSessionName;
       if (backend === "azure") {
         payload.backend = "azure";
         if (model) payload.model = model;
@@ -369,8 +543,13 @@
           throw new Error(text || `HTTP ${res.status}`);
         }
         const data = await res.json();
+        currentSessionId = data.session_id;
+        currentSessionName = data.session_name || currentSessionName;
+        sessionTitleEl.textContent = currentSessionName;
         answerEl.textContent = data.answer || "(no answer)";
         renderContexts(data.hits || []);
+        await loadSessions();
+        await openSession(currentSessionId);
         setStatus("Done");
       } catch (err) {
         errorEl.textContent = err.message || "Request failed";
@@ -378,8 +557,9 @@
       }
     }
 
-    // Kick off initial health check
+    // Kick off initial health check and session list load
     checkHealth();
+    loadSessions();
   </script>
 </body>
 </html>

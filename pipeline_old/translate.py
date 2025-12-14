@@ -77,17 +77,6 @@ def iter_sentences(input_path: Path) -> Iterable[dict]:
                 continue
 
 
-def record_key(rec: dict) -> str:
-    """Best-effort stable key to identify a sentence record across runs."""
-    uid = rec.get("uid")
-    if uid:
-        return str(uid)
-    doc_id = rec.get("doc_id", "")
-    sent_idx = rec.get("sentence_index", "")
-    sentence = rec.get("sentence", "")
-    return f"{doc_id}::{sent_idx}::{sentence}"
-
-
 class AzureChatTranslator:
     """Lightweight wrapper around Azure OpenAI chat completions for translation."""
 
@@ -105,7 +94,7 @@ class AzureChatTranslator:
         self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
         self.temperature = temperature
-        self.system_prompt = system_prompt or "You are a translation engine. Translate the user's text to English. Return only the translation."
+        self.system_prompt = system_prompt or "You are a translation engine. Translate the user's text to English. User text might be mix of english and nepali. Make sure whole sentence is in english when you generate output. Return only the translation."
 
         missing = [name for name, val in (
             ("AZURE_OPENAI_DEPLOYMENT", self.deployment),
@@ -121,18 +110,8 @@ class AzureChatTranslator:
             api_version=self.api_version,
         )
 
-    def _is_content_filter_error(self, err: BadRequestError) -> bool:
-        resp = getattr(err, "response", None)
-        if not isinstance(resp, dict):
-            return False
-        error_info = resp.get("error") or {}
-        if error_info.get("code") == "content_filter":
-            return True
-        inner = error_info.get("innererror") or {}
-        return inner.get("code") == "ResponsibleAIPolicyViolation"
-
-    def translate_batch(self, texts: List[str]) -> List[tuple[str, bool]]:
-        translations: List[tuple[str, bool]] = []
+    def translate_batch(self, texts: List[str]) -> List[str]:
+        translations: List[str] = []
         for text in texts:
             try:
                 resp = self.client.chat.completions.create(
@@ -144,13 +123,22 @@ class AzureChatTranslator:
                     temperature=self.temperature,
                 )
                 choice = resp.choices[0].message.content if resp.choices else ""
-                translations.append(((choice or "").strip(), True))
-            except BadRequestError:
-                # if self._is_content_filter_error(err):
-                #     translations.append((text, False))
-                #     continue
-                # raise
-                logging.warning("Azure content filter triggered; skipping translation for this entry.")
+                translations.append((choice or "").strip())
+            except BadRequestError as exc:
+                # Content filter hit or other bad request; log and passthrough
+                logging.warning(
+                    "Azure translation skipped due to BadRequest: %s; passing through original text",
+                    exc,
+                )
+                translations.append(text)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning(
+                    "Azure translation failed (deployment=%s, endpoint=%s): %s; passing through original text",
+                    self.deployment,
+                    self.endpoint,
+                    exc,
+                )
+                translations.append(text)
         return translations
 
 
@@ -237,11 +225,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Translate only this many sentences (debugging).",
     )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from existing output file (skip already processed records and append).",
-    )
     return parser.parse_args()
 
 
@@ -249,24 +232,6 @@ def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-
-    processed_keys: set[str] = set()
-    total_written = 0
-    resume_mode = args.resume and args.output.exists()
-
-    if resume_mode:
-        logging.info("Resuming from existing output at %s", args.output)
-        with args.output.open(encoding="utf-8") as existing_f:
-            for line in existing_f:
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                processed_keys.add(record_key(rec))
-                total_written += 1
-        if args.limit is not None and total_written >= args.limit:
-            logging.info("Limit %d already reached by existing output (%d records). Nothing to do.", args.limit, total_written)
-            return
 
     azure_translator: Optional[AzureChatTranslator] = None
     if args.translator_backend == "azure":
@@ -279,8 +244,8 @@ def main() -> None:
         tokenizer, model = load_model(args.model, device)
         bos_id = forced_bos_id(tokenizer, args.tgt_lang_code)
 
-    mode = "a" if resume_mode else "w"
-    with args.output.open(mode, encoding="utf-8") as out_f:
+    total_written = 0
+    with args.output.open("w", encoding="utf-8") as out_f:
         iterator = iter_sentences(args.input)
         for batch in tqdm(batched(iterator, args.batch_size), desc="Translating"):
             if args.limit is not None and total_written >= args.limit:
@@ -290,16 +255,13 @@ def main() -> None:
             passthrough = []
 
             for rec in batch:
-                key = record_key(rec)
-                if resume_mode and key in processed_keys:
-                    continue
                 lang = rec.get("doc_language", "")
                 if args.source_lang_filter and lang != args.source_lang_filter:
                     passthrough.append(rec)
                 else:
                     to_translate.append(rec)
 
-            translations: list[tuple[str, bool]] = []
+            translations: list[str] = []
             if to_translate:
                 texts = [r.get("sentence", "") for r in to_translate]
                 if args.translator_backend == "azure":
@@ -319,11 +281,10 @@ def main() -> None:
                         forced_bos_token_id=bos_id,  # type: ignore[union-attr]
                         max_length=args.max_output_length,
                     )
-                    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                    translations = [(text, True) for text in decoded]
+                    translations = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
             # emit translated records
-            for rec, (translation, translated_ok) in zip(to_translate, translations):
+            for rec, translation in zip(to_translate, translations):
                 translated_rec = TranslatedSentence(
                     uid=rec.get("uid", ""),
                     doc_id=rec.get("doc_id", ""),
@@ -334,14 +295,13 @@ def main() -> None:
                     kind=rec.get("kind", ""),
                     doc_language=rec.get("doc_language", ""),
                     sentence=rec.get("sentence", ""),
-                    translation=translation or rec.get("sentence", ""),
-                    translated=translated_ok,
-                    translator_model=(args.azure_deployment if args.translator_backend == "azure" else args.model) if translated_ok else None,
+                    translation=translation,
+                    translated=True,
+                    translator_model=args.azure_deployment if args.translator_backend == "azure" else args.model,
                     source_lang_code=args.src_lang_code,
                     target_lang_code=args.tgt_lang_code,
                 )
                 out_f.write(json.dumps(asdict(translated_rec), ensure_ascii=False) + "\n")
-                processed_keys.add(record_key(rec))
                 total_written += 1
                 if args.limit is not None and total_written >= args.limit:
                     break
@@ -368,7 +328,6 @@ def main() -> None:
                     target_lang_code=args.tgt_lang_code,
                 )
                 out_f.write(json.dumps(asdict(translated_rec), ensure_ascii=False) + "\n")
-                processed_keys.add(record_key(rec))
                 total_written += 1
                 if args.limit is not None and total_written >= args.limit:
                     break

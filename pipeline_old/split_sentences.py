@@ -190,7 +190,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=1100,
+        default=1_100,
         help="Target chunk size (characters).",
     )
     parser.add_argument(
