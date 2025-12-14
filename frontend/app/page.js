@@ -34,6 +34,7 @@ export default function Page() {
   const [username, setUsername] = useState("");
   const [token, setToken] = useState(null);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [sources, setSources] = useState([]);
   const chatWindowRef = useRef(null);
   const router = useRouter();
 
@@ -183,6 +184,7 @@ export default function Page() {
     const optimisticHistory = [...history, { role: "user", content: trimmed }];
     setHistory(optimisticHistory);
     setInput("");
+    setSources([]);
     try {
       const payload = {
         query: trimmed,
@@ -202,6 +204,7 @@ export default function Page() {
       setSessionName(data.session_name || sessionName);
       await openSession(data.session_id);
       await loadSessions();
+      setSources(data.hits || []);
       setStatus("");
     } catch (err) {
       setStatus(err.message || "Failed to send");
@@ -347,6 +350,24 @@ export default function Page() {
                 <div key={idx} className={`bubble ${turn.role === "user" ? "user" : "bot"}`}>
                   <h4>{turn.role === "user" ? "You" : "NepEd Bot"}</h4>
                   <div>{turn.content}</div>
+                  {turn.role === "assistant" && sources.length > 0 && idx === history.length - 1 && (
+                    <div className="sources" style={{ marginTop: 10 }}>
+                      <h4>References</h4>
+                      {sources.slice(0, 2).map((hit, hIdx) => {
+                        const meta = hit.metadata || {};
+                        const source = meta.source_url || meta.source_path || meta.source_domain || "unknown";
+                        const label = source.replace(/^https?:\/\//, "");
+                        return (
+                          <div key={`${hit.id}-${hIdx}`} className="source-item">
+                            <span className="small">[{hIdx + 1}]</span>
+                            <a className="source-pill" href={source} target="_blank" rel="noreferrer">
+                              {label}
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

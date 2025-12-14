@@ -13,7 +13,7 @@ Chat and session-aware RAG API that serves the vector index, conversation persis
 
 ## Run (dev)
 ```bash
-uvicorn backend.app.main:app --reload --port 8000
+uvicorn backend.app.main:app --reload
 ```
 The API will auto-serve a static frontend at `/ui/` if a Next.js export is present in `frontend/out`.
 

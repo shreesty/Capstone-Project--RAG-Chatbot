@@ -21,6 +21,10 @@ export default function LoginPage() {
   };
 
   const handleAuth = async (mode) => {
+    if (!username.trim() || !password.trim()) {
+      setStatus("Enter username and password");
+      return;
+    }
     setStatus(mode === "signup" ? "Signing up..." : "Logging in...");
     try {
       const data = await apiFetch(`/${mode}`, {

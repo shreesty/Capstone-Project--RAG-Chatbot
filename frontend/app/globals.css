@@ -229,6 +229,40 @@ a {
   color: var(--muted);
 }
 
+.sources {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sources h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.source-item {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 6px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.source-pill {
+  background: rgba(42, 230, 201, 0.12);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(42, 230, 201, 0.35);
+  font-size: 12px;
+  text-decoration: none;
+}
+
 .composer {
   border: 1px solid var(--border);
   border-radius: 14px;

@@ -16,7 +16,7 @@ class SessionMeta(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(..., description="User question.")
-    top_k: int = Field(5, ge=1, le=50, description="Number of neighbors to retrieve.")
+    top_k: int = Field(15, ge=1, le=50, description="Number of neighbors to retrieve.")
     model: str = Field("gpt-4o-mini", description="LLM model name.")
     backend: str | None = Field(
         default="azure", description="LLM backend to use (fixed to azure in UI)."
