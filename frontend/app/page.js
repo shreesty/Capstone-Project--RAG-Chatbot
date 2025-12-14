@@ -113,7 +113,7 @@ export default function Page() {
       setSessionId(data.session.id);
       setSessionName(data.session.name);
       setHistory(data.history || []);
-      setStatus("Ready");
+      setStatus("");
     } catch (err) {
       setStatus(err.message || "Failed to load session");
     }
