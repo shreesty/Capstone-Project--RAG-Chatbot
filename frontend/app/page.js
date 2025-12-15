@@ -230,16 +230,12 @@ export default function Page() {
       .replace(/http\//g, "http://")
       .replace(/^https_/, "https://")
       .replace(/^http_/, "http://");
-<<<<<<< HEAD
-    if (!candidate.includes("://") && candidate.includes("_")) {
-=======
     // Normalize underscores to slashes after protocol
     if (candidate.includes("://")) {
       const [scheme, restRaw] = candidate.split("://", 2);
       const rest = (restRaw || "").replace(/_/g, "/").replace(/\/+/g, "/");
       candidate = `${scheme}://${rest.replace(/^\/+/, "")}`;
     } else if (candidate.includes("_")) {
->>>>>>> 0a9cfcb658a849b15260a29bec83ec03a836ac88
       candidate = candidate.replace(/_/g, "/");
     }
     candidate = candidate.replace(/\.pdf\.pdf$/, ".pdf").replace(/\.html\.html$/, ".html").replace(/\.txt$/, "");
