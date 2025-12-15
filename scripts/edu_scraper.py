@@ -26,10 +26,10 @@ REQUEST_TIMEOUT = 15
 REQUEST_DELAY = 1.0
 
 # Max pages per domain to avoid infinite crawling
-MAX_PAGES_PER_DOMAIN = 40
+MAX_PAGES_PER_DOMAIN = 1500
 
 # Max depth from seed URL (0 = only seed page, 1 = seed + links from it, etc.)
-MAX_DEPTH = 2
+MAX_DEPTH = 7
 
 # Base directory where all data will be stored
 BASE_OUTPUT_DIR = "scraped_data"
@@ -402,4 +402,6 @@ if __name__ == "__main__":
     )
 
     crawler.crawl()
+
+
 

@@ -113,7 +113,7 @@ export default function Page() {
       setSessionId(data.session.id);
       setSessionName(data.session.name);
       setHistory(data.history || []);
-      setStatus("");
+      setStatus("Ready");
     } catch (err) {
       setStatus(err.message || "Failed to load session");
     }
@@ -216,6 +216,27 @@ export default function Page() {
   const applyTheme = (next) => {
     document.body.classList.remove("theme-dark", "theme-light");
     document.body.classList.add(`theme-${next}`);
+  };
+
+  const formatSource = (meta = {}) => {
+    if (!meta) return { href: "#", label: "unknown" };
+    const direct = meta.source_url;
+    if (direct) {
+      return { href: direct, label: direct.replace(/^https?:\/\//, "") };
+    }
+    const rawPath = meta.source_path || "";
+    const encoded = rawPath.split("/").pop() || rawPath;
+    let candidate = encoded
+      .replace(/^https_/, "https://")
+      .replace(/^http_/, "http://")
+      .replace(/_/g, "/");
+    if (candidate.endsWith(".pdf.pdf")) candidate = candidate.slice(0, -4);
+    if (candidate.endsWith(".html.html")) candidate = candidate.slice(0, -5);
+    if (candidate.endsWith(".txt")) candidate = candidate.slice(0, -4);
+    if (!candidate.startsWith("http")) {
+      candidate = "https://" + candidate;
+    }
+    return { href: candidate, label: candidate.replace(/^https?:\/\//, "") };
   };
 
   const toggleTheme = () => {
@@ -353,14 +374,12 @@ export default function Page() {
                   {turn.role === "assistant" && sources.length > 0 && idx === history.length - 1 && (
                     <div className="sources" style={{ marginTop: 10 }}>
                       <h4>References</h4>
-                      {sources.slice(0, 2).map((hit, hIdx) => {
-                        const meta = hit.metadata || {};
-                        const source = meta.source_url || meta.source_path || meta.source_domain || "unknown";
-                        const label = source.replace(/^https?:\/\//, "");
+                      {sources.slice(0, 5).map((hit, hIdx) => {
+                        const { href, label } = formatSource(hit.metadata || {});
                         return (
                           <div key={`${hit.id}-${hIdx}`} className="source-item">
                             <span className="small">[{hIdx + 1}]</span>
-                            <a className="source-pill" href={source} target="_blank" rel="noreferrer">
+                            <a className="source-pill" href={href} target="_blank" rel="noreferrer">
                               {label}
                             </a>
                           </div>
