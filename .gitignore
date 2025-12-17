@@ -12,3 +12,4 @@ scraped_data*
 processed*
 .env
 vector_store*
+presentation_*
