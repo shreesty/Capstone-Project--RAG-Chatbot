@@ -82,19 +82,19 @@ def extract_docx_file(path: Path) -> str:
     return clean_text("\n".join(parts))
 
 
-def ocr_image(img: Image.Image, psm: int = 6) -> str:
+def ocr_image(img: Image.Image, psm: int = 6, lang: str = "nep+eng") -> str:
     """Run Tesseract OCR with a layout-friendly default page segmentation mode."""
-    return pytesseract.image_to_string(img, config=f"--oem 3 --psm {psm}")
+    return pytesseract.image_to_string(img, lang=lang, config=f"--oem 3 --psm {psm}")
 
 
-def extract_image_file(path: Path) -> str:
+def extract_image_file(path: Path, lang: str) -> str:
     with Image.open(path) as img:
         normalized = ImageOps.exif_transpose(img).convert("RGB")
         gray = normalized.convert("L")
-        return clean_text(ocr_image(gray, psm=6))
+        return clean_text(ocr_image(gray, psm=6, lang=lang))
 
 
-def extract_pdf_file(path: Path, ocr_page_limit: int = 2) -> str:
+def extract_pdf_file(path: Path, ocr_page_limit: int = 2, lang: str = "eng") -> str:
     text_parts: list[str] = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
@@ -109,7 +109,7 @@ def extract_pdf_file(path: Path, ocr_page_limit: int = 2) -> str:
         for page in pdf.pages[:ocr_page_limit]:
             page_image = page.to_image(resolution=300)
             gray = page_image.original.convert("L")
-            ocr_parts.append(ocr_image(gray, psm=6))
+            ocr_parts.append(ocr_image(gray, psm=6, lang=lang))
     return clean_text("\n".join(ocr_parts))
 
 
@@ -155,7 +155,7 @@ def discover_additional_files(
 
 
 def extract_path(
-    path: Path, ocr_pdf_pages: int, default_kind: Optional[str]
+    path: Path, ocr_pdf_pages: int, default_kind: Optional[str], ocr_lang: str
 ) -> Optional[tuple[str, str]]:
     ext = path.suffix.lower()
     try:
@@ -166,16 +166,19 @@ def extract_path(
         if ext in SUPPORTED_DOC_EXTS:
             return extract_docx_file(path), default_kind or "docx"
         if ext in SUPPORTED_PDF_EXTS:
-            return extract_pdf_file(path, ocr_page_limit=ocr_pdf_pages), default_kind or "pdf"
+            return (
+                extract_pdf_file(path, ocr_page_limit=ocr_pdf_pages, lang=ocr_lang),
+                default_kind or "pdf",
+            )
         if ext in SUPPORTED_IMAGE_EXTS:
-            return extract_image_file(path), default_kind or "image_ocr"
+            return extract_image_file(path, lang=ocr_lang), default_kind or "image_ocr"
     except Exception as exc:  # noqa: BLE001
         logging.warning("Failed to extract %s: %s", path, exc)
     return None
 
 
 def iter_sources(
-    root: Path, ocr_pdf_pages: int, include_images: bool
+    root: Path, ocr_pdf_pages: int, include_images: bool, ocr_lang: str
 ) -> Iterable[ExtractedDocument]:
     seen: set[Path] = set()
 
@@ -189,7 +192,7 @@ def iter_sources(
             continue
         seen.add(resolved)
 
-        extracted = extract_path(path, ocr_pdf_pages, default_kind=kind)
+        extracted = extract_path(path, ocr_pdf_pages, default_kind=kind, ocr_lang=ocr_lang)
         if not extracted:
             continue
         text, doc_kind = extracted
@@ -209,7 +212,7 @@ def iter_sources(
     for path, domain, url, kind in discover_additional_files(
         root, seen=seen, include_images=include_images
     ):
-        extracted = extract_path(path, ocr_pdf_pages, default_kind=kind)
+        extracted = extract_path(path, ocr_pdf_pages, default_kind=kind, ocr_lang=ocr_lang)
         if not extracted:
             continue
         text, doc_kind = extracted
@@ -259,6 +262,12 @@ def parse_args() -> argparse.Namespace:
         help="How many pages to OCR when PDFs have no extractable text.",
     )
     parser.add_argument(
+        "--ocr-lang",
+        type=str,
+        default="nep+eng",
+        help="Tesseract language(s) to use for OCR (e.g., 'nep+eng').",
+    )
+    parser.add_argument(
         "--no-images",
         action="store_true",
         help="Skip OCR on images and image-based PDFs.",
@@ -277,7 +286,7 @@ def main() -> None:
     with args.output.open("w", encoding="utf-8") as f:
         for idx, doc in enumerate(
             tqdm(
-                iter_sources(args.root, args.ocr_pdf_pages, include_images),
+                iter_sources(args.root, args.ocr_pdf_pages, include_images, args.ocr_lang),
                 desc="Extracting documents",
             )
         ):
