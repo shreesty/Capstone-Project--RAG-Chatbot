@@ -34,7 +34,7 @@ Azure option: add `--translator-backend azure --azure-deployment <deployment>` t
 
 Run (ensure the model is downloaded/cached):
 ```bash
-python pipeline/translate.py 
+python pipeline/translate.py --skip
 ```
 
 ## Stage 4: Embeddings (ready)

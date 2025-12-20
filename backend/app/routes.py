@@ -154,7 +154,18 @@ def register_routes(app: FastAPI) -> None:
         for msg in past_history[-HISTORY_LIMIT:]:
             history_store.append(msg)
 
-        query_vec = embed_query(embed_model, request.query)
+        history_snippets = [
+            f"{m.get('role')}: {m.get('content', '')}"
+            for m in history_store
+            if m.get("role") in ("user", "assistant")
+        ]
+        retrieval_query = (
+            f"Conversation so far:\n" + "\n".join(history_snippets) + f"\n\nUser question: {request.query}"
+            if history_snippets
+            else request.query
+        )
+
+        query_vec = embed_query(embed_model, retrieval_query)
         k = min(request.top_k, index.ntotal)
         scores, ids = index.search(query_vec, k)
 

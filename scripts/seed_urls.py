@@ -3,10 +3,10 @@
 
 SEED_URLS = [
     
-    # "https://tu.edu.np/",
-    # "https://ku.edu.np/",
-    # "https://pu.edu.np/",
-    # "https://kingscollege.edu.np/",
+    "https://tu.edu.np/",
+    "https://ku.edu.np/",
+    "https://pu.edu.np/",
+    "https://kingscollege.edu.np/",
     "https://islington.edu.np/",
     "https://softwarica.edu.np/",
     "https://heraldcollege.edu.np/",
@@ -15,9 +15,14 @@ SEED_URLS = [
     "https://www.collegesnepal.com/",
     "https://edusanjal.com/college/",
     "https://www.collegenp.com/",
-
-
-
+    "https://presidential.edu.np/",
+    "https://ismt.edu.np/",
+    "https://texasintl.edu.np/",
+    "https://mitnepal.edu.np/",
+    "https://thamescollege.edu.np/",
+    "https://nami.edu.np/",
+    "https://davcollege.edu.np/",
+    "https://www.sxc.edu.np/",
 
     # "https://www.fwu.edu.np/",
     # "https://www.mwu.edu.np/",

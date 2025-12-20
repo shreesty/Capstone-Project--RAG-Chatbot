@@ -13,3 +13,4 @@ processed*
 .env
 vector_store*
 presentation_*
+scrapped

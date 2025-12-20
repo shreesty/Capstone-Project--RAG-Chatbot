@@ -242,6 +242,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Resume from existing output file (skip already processed records and append).",
     )
+    parser.add_argument(
+        "--skip",
+        action="store_true",
+        help="Skip translation and emit original sentences (for debugging/quick passthrough).",
+    )
     return parser.parse_args()
 
 
@@ -269,15 +274,18 @@ def main() -> None:
             return
 
     azure_translator: Optional[AzureChatTranslator] = None
-    if args.translator_backend == "azure":
-        azure_translator = AzureChatTranslator(
-            deployment=args.azure_deployment,
-        )
-        logging.info("Using Azure OpenAI deployment=%s endpoint=%s", azure_translator.deployment, azure_translator.endpoint)
+    if not args.skip:
+        if args.translator_backend == "azure":
+            azure_translator = AzureChatTranslator(
+                deployment=args.azure_deployment,
+            )
+            logging.info("Using Azure OpenAI deployment=%s endpoint=%s", azure_translator.deployment, azure_translator.endpoint)
+        else:
+            device = auto_device(args.device)
+            tokenizer, model = load_model(args.model, device)
+            bos_id = forced_bos_id(tokenizer, args.tgt_lang_code)
     else:
-        device = auto_device(args.device)
-        tokenizer, model = load_model(args.model, device)
-        bos_id = forced_bos_id(tokenizer, args.tgt_lang_code)
+        logging.info("Skipping translation as requested; emitting original sentences.")
 
     mode = "a" if resume_mode else "w"
     with args.output.open(mode, encoding="utf-8") as out_f:
@@ -302,7 +310,9 @@ def main() -> None:
             translations: list[tuple[str, bool]] = []
             if to_translate:
                 texts = [r.get("sentence", "") for r in to_translate]
-                if args.translator_backend == "azure":
+                if args.skip:
+                    translations = [(text, False) for text in texts]
+                elif args.translator_backend == "azure":
                     translations = azure_translator.translate_batch(texts)  # type: ignore[union-attr]
                 else:
                     tokenizer.src_lang = args.src_lang_code
@@ -373,14 +383,14 @@ def main() -> None:
                 if args.limit is not None and total_written >= args.limit:
                     break
 
-    if args.translator_backend == "azure":
+    if not args.skip and args.translator_backend == "azure":
         logging.info(
             "Wrote %d sentences to %s (backend=azure deployment=%s)",
             total_written,
             args.output,
             args.azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT", ""),
         )
-    else:
+    elif not args.skip:
         logging.info(
             "Wrote %d sentences to %s (backend=nllb model=%s, device=%s)",
             total_written,
@@ -388,6 +398,8 @@ def main() -> None:
             args.model,
             device,  # type: ignore[arg-type]
         )
+    else:
+        logging.info("Wrote %d sentences to %s (skip mode: no translation performed)", total_written, args.output)
 
 
 if __name__ == "__main__":
